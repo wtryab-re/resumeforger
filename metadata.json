@@ -1,0 +1,6 @@
+{
+  "name": "ResumeForge AI",
+  "description": "Tailor resumes and generate personalized cover letters for job descriptions with ATS scoring, keyword optimization, and PDF/DOCX export, grounded strictly in candidate experience.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
