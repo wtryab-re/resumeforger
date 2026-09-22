@@ -9,6 +9,7 @@ import {
 } from "docx";
 import { TailoredResume, CoverLetterData } from "../types";
 import { sanitizeSignOff, getFormattedCoverLetterDate } from "./coverLetterUtils";
+import { formatEducationDetails } from "./masterProfile";
 
 /**
  * Trigger browser file download from Blob
@@ -254,13 +255,14 @@ export async function exportResumeToDocx(
         })
       );
 
-      if (edu.honorsOrDetails) {
+      const details = formatEducationDetails(edu);
+      if (details) {
         children.push(
           new Paragraph({
             spacing: { after: 80 },
             children: [
               new TextRun({
-                text: edu.honorsOrDetails,
+                text: details,
                 italics: true,
                 size: 19,
                 color: "666666",

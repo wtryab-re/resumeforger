@@ -39,7 +39,8 @@ export interface EducationItem {
   fieldOfStudy?: string;
   location?: string;
   graduationYear?: string;
-  honorsOrDetails?: string;
+  gpa?: string;
+  honorsOrDetails?: string; // awards / honors, e.g. "Dean's List, Magna Cum Laude"
 }
 
 export interface ProjectItem {
@@ -91,6 +92,7 @@ export interface CustomSection {
  */
 export type ProfileExperienceItem = ExperienceItem & { id: string };
 export type ProfileEducationItem = EducationItem & { id: string };
+export type ProfileProjectItem = ProjectItem & { id: string };
 
 export interface MasterProfile {
   id: string;
@@ -107,6 +109,7 @@ export interface MasterProfile {
   skills: string[]; // array of skills or tags
   experience: ProfileExperienceItem[];
   education: ProfileEducationItem[];
+  projects?: ProfileProjectItem[]; // optional: profiles saved before projects existed lack it
   volunteerExperience: VolunteerItem[];
   certificationsAndAwards: CertificationOrAwardItem[];
   otherInfo?: string;

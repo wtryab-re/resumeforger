@@ -15,6 +15,7 @@ export function createEmptyMasterProfile(): MasterProfile {
     skills: [],
     experience: [],
     education: [],
+    projects: [],
     volunteerExperience: [],
     certificationsAndAwards: [],
     customFields: [],
@@ -86,6 +87,7 @@ export function loadMasterProfile(userId?: string): MasterProfile {
           skills: Array.isArray(parsed.skills) ? parsed.skills : [],
           experience: Array.isArray(parsed.experience) ? parsed.experience : [],
           education: Array.isArray(parsed.education) ? parsed.education : [],
+          projects: Array.isArray(parsed.projects) ? parsed.projects : [],
           volunteerExperience: Array.isArray(parsed.volunteerExperience) ? parsed.volunteerExperience : [],
           certificationsAndAwards: Array.isArray(parsed.certificationsAndAwards) ? parsed.certificationsAndAwards : [],
           customFields: Array.isArray(parsed.customFields) ? parsed.customFields : [],
@@ -126,6 +128,72 @@ export function wipeMasterProfileToCleanSlate(userId?: string): MasterProfile {
     console.error("Failed to wipe master profile:", e);
   }
   return empty;
+}
+
+/**
+ * GPA and awards/honors for an education entry as one line, e.g.
+ * "GPA: 3.8 · Dean's List". Shared by the prompt text, preview and exports.
+ */
+export function formatEducationDetails(edu: Pick<EducationItem, "gpa" | "honorsOrDetails">): string {
+  return [edu.gpa?.trim() ? `GPA: ${edu.gpa.trim()}` : "", edu.honorsOrDetails?.trim() || ""]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+const MONTHS: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+  winter: 0, spring: 3, summer: 6, fall: 8, autumn: 8,
+};
+
+/**
+ * Turns a free-text resume date ("Mar 2022", "03/2022", "2022", "Present")
+ * into a sortable month index. "Present"/"Current" sort after every real date;
+ * text with no recognisable year returns null.
+ */
+function dateRank(value?: string): number | null {
+  const text = (value || "").trim().toLowerCase();
+  if (!text) return null;
+  if (/\b(present|current|now|ongoing|today)\b/.test(text)) return Number.MAX_SAFE_INTEGER;
+
+  const years = text.match(/\b(?:19|20)\d{2}\b/g);
+  if (!years) return null;
+  const year = Number(years[years.length - 1]);
+
+  let month = 0;
+  const named = text.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|winter|spring|summer|fall|autumn)/);
+  const numeric = text.match(/\b(\d{1,2})[/.-](?:19|20)\d{2}\b/) || text.match(/\b(?:19|20)\d{2}[/.-](\d{1,2})\b/);
+  if (named) month = MONTHS[named[1]];
+  else if (numeric && Number(numeric[1]) >= 1 && Number(numeric[1]) <= 12) month = Number(numeric[1]) - 1;
+
+  return year * 12 + month;
+}
+
+/** Most recent first; entries with no parseable date keep their order at the end. */
+function sortByRanksDesc<T>(items: T[], ranks: (item: T) => (number | null)[]): T[] {
+  const compare = (a: (number | null)[], b: (number | null)[]) => {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const x = a[i] ?? null;
+      const y = b[i] ?? null;
+      if (x === y) continue;
+      if (x === null) return 1;
+      if (y === null) return -1;
+      return y - x;
+    }
+    return 0;
+  };
+  return [...items].sort((a, b) => compare(ranks(a), ranks(b)));
+}
+
+export function sortExperienceDesc<T extends ExperienceItem>(items: T[]): T[] {
+  // Order by when the role ended (ongoing roles first), then by when it started.
+  return sortByRanksDesc(items, (exp) => {
+    const start = dateRank(exp.startDate);
+    return [dateRank(exp.endDate) ?? start, start];
+  });
+}
+
+export function sortEducationDesc<T extends EducationItem>(items: T[]): T[] {
+  return sortByRanksDesc(items, (edu) => [dateRank(edu.graduationYear)]);
 }
 
 /**
@@ -175,9 +243,21 @@ export function masterProfileToPlainText(profile: MasterProfile): string {
     const eduText = profile.education.map((edu) => {
       const degree = [edu.degree, edu.fieldOfStudy].filter(Boolean).join(" in ");
       const header = `${degree} | ${edu.institution}${edu.location ? ` | ${edu.location}` : ""}${edu.graduationYear ? ` | ${edu.graduationYear}` : ""}`;
-      return edu.honorsOrDetails ? `${header}\n${edu.honorsOrDetails}` : header;
+      const details = formatEducationDetails(edu);
+      return details ? `${header}\n${details}` : header;
     }).join("\n\n");
     sections.push(`EDUCATION\n\n${eduText}`);
+  }
+
+  // Projects
+  const projects = (profile.projects || []).filter((p) => p.name?.trim());
+  if (projects.length > 0) {
+    const projText = projects.map((proj) => {
+      const header = `${proj.name}${proj.link ? ` | ${proj.link}` : ""}`;
+      const tech = proj.technologies && proj.technologies.length > 0 ? `Technologies: ${proj.technologies.join(", ")}` : "";
+      return [header, tech, proj.description?.trim()].filter(Boolean).join("\n");
+    }).join("\n\n");
+    sections.push(`PROJECTS\n\n${projText}`);
   }
 
   // Volunteer Experience

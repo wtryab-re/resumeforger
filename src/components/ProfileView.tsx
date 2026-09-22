@@ -4,21 +4,27 @@ import {
   ExperienceItem, 
   EducationItem, 
   ProfileExperienceItem,
-  ProfileEducationItem, 
-  VolunteerItem, 
+  ProfileEducationItem,
+  ProfileProjectItem,
+  ProjectItem,
+  VolunteerItem,
   CertificationOrAwardItem, 
   CustomField, 
   CustomSection 
 } from "../types";
 import { 
-  masterProfileToPlainText, 
-  createEmptyMasterProfile
+  masterProfileToPlainText,
+  createEmptyMasterProfile,
+  sortExperienceDesc,
+  sortEducationDesc
 } from "../utils/masterProfile";
+import { DelimitedListInput } from "./DelimitedListInput";
 import { 
   User, 
   Briefcase, 
-  GraduationCap, 
-  HeartHandshake, 
+  GraduationCap,
+  FolderGit2,
+  HeartHandshake,
   Award, 
   Plus, 
   Trash2, 
@@ -79,10 +85,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const [savedSection, setSavedSection] = useState<string | null>(null);
 
+  // Experience and education are kept most-recent-first; the order is applied
+  // on save rather than while typing so rows don't jump around mid-edit.
+  const sortProfileSections = (
+    source: MasterProfile,
+    sections: ("experience" | "education")[]
+  ): MasterProfile => ({
+    ...source,
+    ...(sections.includes("experience") && { experience: sortExperienceDesc(source.experience || []) }),
+    ...(sections.includes("education") && { education: sortEducationDesc(source.education || []) }),
+  });
+
   // Handle Save
   const handleSave = () => {
     setIsSaving(true);
-    onSaveProfile(profile);
+    const sorted = sortProfileSections(profile, ["experience", "education"]);
+    setProfile(sorted);
+    onSaveProfile(sorted);
     setIsSaving(false);
     setSaveSuccess(true);
     showToast({
@@ -94,7 +113,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   };
 
   const handleSaveSection = (sectionKey: string, sectionTitle: string) => {
-    onSaveProfile(profile);
+    const toSave =
+      sectionKey === "experience" || sectionKey === "education"
+        ? sortProfileSections(profile, [sectionKey])
+        : profile;
+    setProfile(toSave);
+    onSaveProfile(toSave);
     setSavedSection(sectionKey);
     showToast({
       type: "success",
@@ -241,10 +265,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       degree: "",
       fieldOfStudy: "",
       graduationYear: "",
+      gpa: "",
+      honorsOrDetails: "",
     };
     setProfile((prev) => ({
       ...prev,
-      education: [...(prev.education || []), newEdu],
+      education: [newEdu, ...(prev.education || [])],
     }));
   };
 
@@ -261,6 +287,36 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setProfile((prev) => ({
       ...prev,
       education: prev.education?.filter((edu) => edu.id !== id),
+    }));
+  };
+
+  const handleAddProject = () => {
+    const newProject: ProfileProjectItem = {
+      id: `proj-${Date.now()}`,
+      name: "",
+      description: "",
+      technologies: [],
+      link: "",
+    };
+    setProfile((prev) => ({
+      ...prev,
+      projects: [newProject, ...(prev.projects || [])],
+    }));
+  };
+
+  const handleUpdateProject = (id: string, field: keyof ProjectItem, value: any) => {
+    setProfile((prev) => ({
+      ...prev,
+      projects: prev.projects?.map((proj) =>
+        proj.id === id ? { ...proj, [field]: value, id: proj.id } : proj
+      ),
+    }));
+  };
+
+  const handleDeleteProject = (id: string) => {
+    setProfile((prev) => ({
+      ...prev,
+      projects: prev.projects?.filter((proj) => proj.id !== id),
     }));
   };
 
@@ -716,13 +772,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
               {renderSectionSaveButton("skills", "Core Skills & Technologies")}
             </div>
-            <textarea
+            <DelimitedListInput
               rows={3}
-              value={profile.skills?.join(", ") || ""}
-              onChange={(e) => {
-                const skillsArray = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
-                setProfile({ ...profile, skills: skillsArray });
-              }}
+              delimiter=","
+              items={profile.skills}
+              onChange={(skills) => setProfile((prev) => ({ ...prev, skills }))}
               placeholder="TypeScript, React, Node.js, Python, AWS, PostgreSQL, Docker, GraphQL, CI/CD"
               className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-slate-400 bg-white"
             />
@@ -848,13 +902,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       <label className="block text-[11px] font-medium text-slate-600 mb-1">
                         Accomplishment Bullets (One per line)
                       </label>
-                      <textarea
+                      <DelimitedListInput
                         rows={3}
-                        value={exp.bullets?.join("\n") || ""}
-                        onChange={(e) => {
-                          const bullets = e.target.value.split("\n").filter((b) => b.trim().length > 0);
-                          handleUpdateExperience(exp.id, "bullets", bullets);
-                        }}
+                        delimiter={"\n"}
+                        items={exp.bullets}
+                        onChange={(bullets) => handleUpdateExperience(exp.id, "bullets", bullets)}
                         placeholder="• Architected and deployed microservices architecture, boosting platform availability to 99.98%&#10;• Reduced latency by 45% through optimized queries and cache invalidation"
                         className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white leading-relaxed font-mono focus:outline-none focus:ring-1 focus:ring-slate-400"
                       />
@@ -896,7 +948,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     key={edu.id || idx}
                     className="p-3 rounded-lg border border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row items-start sm:items-center gap-2"
                   >
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 flex-1 w-full">
+                    <div className="flex-1 w-full space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                       <input
                         type="text"
                         value={edu.degree}
@@ -926,6 +979,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                         className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-slate-400"
                       />
                     </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                      <input
+                        type="text"
+                        value={edu.gpa || ""}
+                        onChange={(e) => handleUpdateEducation(edu.id, "gpa", e.target.value)}
+                        placeholder="GPA (e.g. 3.8/4.0)"
+                        className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-slate-400"
+                      />
+                      <input
+                        type="text"
+                        value={edu.honorsOrDetails || ""}
+                        onChange={(e) => handleUpdateEducation(edu.id, "honorsOrDetails", e.target.value)}
+                        placeholder="Awards / Honors (e.g. Dean's List, Magna Cum Laude)"
+                        className="sm:col-span-3 px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-slate-400"
+                      />
+                    </div>
+                    </div>
                     <button
                       type="button"
                       onClick={() => handleDeleteEducation(edu.id)}
@@ -933,6 +1003,84 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Section 5b: Projects */}
+          <div className="bg-white rounded-lg border border-slate-200 p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <FolderGit2 className="w-4 h-4 text-slate-600" />
+                <h3 className="font-bold text-xs uppercase tracking-wider text-slate-900">
+                  Projects
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleAddProject}
+                  className="flex items-center gap-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-md transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Project</span>
+                </button>
+                {renderSectionSaveButton("projects", "Projects")}
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              {(!profile.projects || profile.projects.length === 0) ? (
+                <p className="text-xs text-slate-500 py-2">No projects added yet.</p>
+              ) : (
+                profile.projects.map((proj, idx) => (
+                  <div
+                    key={proj.id || idx}
+                    className="p-3 rounded-lg border border-slate-200 bg-slate-50/70 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 flex-1">
+                        <input
+                          type="text"
+                          value={proj.name}
+                          onChange={(e) => handleUpdateProject(proj.id, "name", e.target.value)}
+                          placeholder="Project Name"
+                          className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-slate-400"
+                        />
+                        <DelimitedListInput
+                          rows={1}
+                          delimiter=","
+                          items={proj.technologies}
+                          onChange={(technologies) => handleUpdateProject(proj.id, "technologies", technologies)}
+                          placeholder="Technologies (comma separated)"
+                          className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white resize-none focus:outline-none focus:ring-1 focus:ring-slate-400"
+                        />
+                        <input
+                          type="text"
+                          value={proj.link || ""}
+                          onChange={(e) => handleUpdateProject(proj.id, "link", e.target.value)}
+                          placeholder="Link (GitHub, demo, etc.)"
+                          className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-slate-400"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteProject(proj.id)}
+                        className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                        title="Delete Project"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={proj.description}
+                      onChange={(e) => handleUpdateProject(proj.id, "description", e.target.value)}
+                      placeholder="What you built, your role, and the outcome..."
+                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white leading-relaxed focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    />
                   </div>
                 ))
               )}

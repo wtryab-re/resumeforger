@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { TailoredResume, TailoringChange } from "../types";
 import { exportResumeToDocx, exportResumeToPdf } from "../utils/exports";
+import { formatEducationDetails } from "../utils/masterProfile";
 
 interface ResumePreviewProps {
   tailoredResume: TailoredResume;
@@ -75,6 +76,8 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
       r.education.forEach(edu => {
         const yr = edu.graduationYear ? ` (${edu.graduationYear})` : "";
         lines.push(`${edu.degree}${edu.fieldOfStudy ? ` in ${edu.fieldOfStudy}` : ""} - ${edu.institution}${yr}`);
+        const details = formatEducationDetails(edu);
+        if (details) lines.push(details);
       });
     }
 
@@ -207,9 +210,9 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
                   {edu.fieldOfStudy && ` in ${edu.fieldOfStudy}`}
                 </span>
                 <span className="text-slate-700"> – {edu.institution}</span>
-                {edu.honorsOrDetails && (
+                {formatEducationDetails(edu) && (
                   <span className="italic text-slate-500 ml-1 text-xs">
-                    ({edu.honorsOrDetails})
+                    ({formatEducationDetails(edu)})
                   </span>
                 )}
               </div>

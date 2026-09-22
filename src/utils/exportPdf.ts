@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import { TailoredResume, CoverLetterData } from "../types";
 import { sanitizeSignOff, getFormattedCoverLetterDate } from "./coverLetterUtils";
+import { formatEducationDetails } from "./masterProfile";
 
 /**
  * Export Tailored Resume to ATS-Optimized PDF
@@ -301,9 +302,15 @@ export function exportResumeToPdf(
       doc.setFontSize(9.5);
       doc.setTextColor(60, 65, 75);
       let inst = edu.institution;
-      if (edu.honorsOrDetails) inst += ` (${edu.honorsOrDetails})`;
-      doc.text(inst, margin, cursorY);
-      cursorY += 14;
+      const details = formatEducationDetails(edu);
+      if (details) inst += ` (${details})`;
+      // GPA plus honors can outrun one line, so wrap instead of clipping.
+      const instLines = doc.splitTextToSize(inst, contentWidth);
+      instLines.forEach((line: string, i: number) => {
+        if (i > 0) checkPageBreak(12);
+        doc.text(line, margin, cursorY);
+        cursorY += i === instLines.length - 1 ? 14 : 12;
+      });
     }
   };
 
