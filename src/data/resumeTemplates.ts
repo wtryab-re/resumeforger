@@ -26,8 +26,8 @@ export const BUILTIN_RESUME_TEMPLATES: ResumeTemplate[] = [
       "Technical Skills & Personal Interests"
     ],
     rules: [
-      "Strict Google XYZ formula: 'Accomplished [X], as measured by [Y], by doing [Z]'",
-      "Quantify every single bullet point with metrics (percentages, dollar amounts, hours saved, volume handled)",
+      "Google XYZ formula ('Accomplished [X], as measured by [Y], by doing [Z]') wherever the candidate's resume supplies the measure; otherwise state the real work and outcome without numbers",
+      "Keep every metric the candidate's resume states (percentages, dollar amounts, hours saved, volume handled); never add a number that isn't there",
       "Education is placed prominently above experience or immediately under summary with GPA/honors if notable",
       "Clean, conservative typography and uppercase section headers with divider rules",
       "No jargon without business context; highlight leadership, cross-functional initiative, and measurable bottom-line value"
@@ -39,12 +39,12 @@ LAYOUT ARCHITECTURE:
 - Standard order:
   1. CONTACT HEADER (Full Name centered in bold uppercase, followed by: City, State | Phone | Email | LinkedIn | Portfolio)
   2. EDUCATION (University, Degree, Major, Graduation Date, Honors/Awards, Relevant Coursework)
-  3. PROFESSIONAL EXPERIENCE (Company Name, Role Title, Location, Dates. 3 to 5 bullets per role strictly adhering to: Action Verb + Project Context + Quantified Business Impact)
+  3. PROFESSIONAL EXPERIENCE (Company Name, Role Title, Location, Dates. 3 to 5 bullets per role: Action Verb + Project Context + Business Impact, quantified only with numbers from the candidate's resume)
   4. LEADERSHIP & NOTABLE PROJECTS (Title/Role, Organization, Scope of initiative, Quantifiable deliverables)
   5. SKILLS & INTERESTS (Technical proficiencies, certifications, spoken languages, authentic personal interests)
 BULLET PHRASING DIRECTIVES:
 - Every bullet must begin with a strong, active past-tense verb (e.g., 'Spearheaded', 'Engineered', 'Optimized', 'Negotiated', 'Directed').
-- Every bullet must specify the metric or percentage improvement.
+- Include the metric or percentage improvement whenever the candidate's resume states one; never invent one.
 `.trim(),
   },
   {
@@ -65,9 +65,9 @@ BULLET PHRASING DIRECTIVES:
     rules: [
       "Technical Skills matrix is placed at the top immediately below the contact header for instant ATS keyword indexing",
       "Categorize skills clearly: Languages, Frameworks, Cloud & Infrastructure, Databases, Developer Tools",
-      "Bullets must emphasize scale (e.g., QPS, throughput, latency reduction, users served, infrastructure cost reduction)",
+      "Emphasize scale (QPS, throughput, latency, users served, infrastructure cost) wherever the candidate's resume states it",
       "Highlight technical stack tags used in each role or project",
-      "Include active links to GitHub, system architectures, or published documentation"
+      "Include the GitHub, portfolio or documentation links the candidate provided"
     ],
     content: `
 [TEMPLATE: MODERN TECH & ENGINEERING]
@@ -79,9 +79,9 @@ LAYOUT ARCHITECTURE:
   3. PROFESSIONAL EXPERIENCE (Company, Role, Dates, Location. Bullets focused on architecture, throughput, reliability, test coverage, and latency/cost metrics. Explicitly note Technologies Used)
   4. TECHNICAL PROJECTS (Project Name, GitHub/Live link, Core Architecture, 2-3 bullets on engineering challenges and user scale)
   5. EDUCATION (Degree, Field, Institution, Graduation Year)
-  6. CERTIFICATIONS (AWS, GCP, CKA, or relevant professional technical credentials)
+  6. CERTIFICATIONS (only credentials the candidate's resume lists; omit the section if there are none)
 BULLET PHRASING DIRECTIVES:
-- Emphasize architectural decisions, system complexity, reliability (99.99% uptime), throughput (QPS), and modern best practices.
+- Emphasize architectural decisions, system complexity, reliability, throughput and modern best practices, using only figures the candidate provided.
 `.trim(),
   },
   {
@@ -101,9 +101,9 @@ BULLET PHRASING DIRECTIVES:
     ],
     rules: [
       "Include a compelling 3-4 sentence Executive Value Proposition establishing industry authority and strategic scope",
-      "Include a 3x3 Core Competencies matrix (e.g., P&L Ownership, M&A Integration, Strategic Vision, Capital Allocation)",
-      "Frame all achievements around top-line revenue growth, bottom-line EBITDA improvement, headcount scaling, and transformation",
-      "Highlight executive governance, board interactions, and cross-functional organizational leadership"
+      "Include a Core Competencies matrix built only from competencies the candidate's resume demonstrates",
+      "Where the candidate's resume supports it, frame achievements around revenue growth, EBITDA improvement, headcount scaling and transformation",
+      "Highlight the governance, board interaction and cross-functional leadership the candidate's resume describes"
     ],
     content: `
 [TEMPLATE: EXECUTIVE & LEADERSHIP C-SUITE]
@@ -112,12 +112,12 @@ LAYOUT ARCHITECTURE:
 - Standard order:
   1. EXECUTIVE HEADER (Name, Executive Title, Contact Info, LinkedIn)
   2. EXECUTIVE VALUE PROPOSITION (High-impact executive summary articulating strategic vision, scale of operations managed, and proven business transformation track record)
-  3. CORE LEADERSHIP COMPETENCIES (Structured grid: P&L Management, Global Team Leadership, Corporate Strategy, Capital Allocation, Mergers & Acquisitions, Organizational Design)
-  4. EXECUTIVE PROFESSIONAL EXPERIENCE (Company, Executive Title, Period, Scope of Role [Revenue/Budget, Global Headcount]. Bullets focused on business turnarounds, growth metrics, and shareholder value)
-  5. BOARD APPOINTMENTS & ADVISORY ROLES (Organization, Title, Advisory Focus)
+  3. CORE LEADERSHIP COMPETENCIES (Structured grid of competencies the candidate's resume demonstrates)
+  4. EXECUTIVE PROFESSIONAL EXPERIENCE (Company, Executive Title, Period, Scope of Role [Revenue/Budget, Headcount] only where stated. Bullets focused on the turnarounds, growth and value the candidate's resume reports)
+  5. BOARD APPOINTMENTS & ADVISORY ROLES (Organization, Title, Advisory Focus; omit entirely if the candidate has none)
   6. EDUCATION & EXECUTIVE PROGRAM CREDENTIALS
 BULLET PHRASING DIRECTIVES:
-- Speak in the language of executive stewardship: EBITDA, ARR, margin expansion, market penetration, operational excellence, and enterprise risk.
+- Use executive vocabulary (EBITDA, ARR, margin expansion, market penetration, operational excellence, enterprise risk) only to describe results the candidate's resume actually reports.
 `.trim(),
   },
 ];

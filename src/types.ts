@@ -48,6 +48,18 @@ export interface ProjectItem {
   description: string;
   technologies?: string[];
   link?: string;
+  /** Included mainly for transferable qualities rather than direct relevance; trimmed first. */
+  transferable?: boolean;
+}
+
+/** A volunteer, community or leadership role on a tailored resume. */
+export interface CommunityItem {
+  organization: string;
+  role: string;
+  location?: string;
+  startDate?: string;
+  endDate?: string;
+  bullets: string[];
 }
 
 export interface VolunteerItem {
@@ -128,6 +140,8 @@ export interface TailoredResume {
   experience: ExperienceItem[];
   education: EducationItem[];
   projects?: ProjectItem[];
+  /** Volunteer / community / leadership roles that show transferable qualities. */
+  community?: CommunityItem[];
   certifications?: string[];
   fontFamily?: string;
 }

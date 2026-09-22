@@ -6,10 +6,13 @@ import {
   HeadingLevel,
   AlignmentType,
   BorderStyle,
+  LineRuleType,
+  TabStopType,
 } from "docx";
-import { TailoredResume, CoverLetterData } from "../types";
+import { TailoredResume, CoverLetterData, ExperienceItem } from "../types";
 import { sanitizeSignOff, getFormattedCoverLetterDate } from "./coverLetterUtils";
 import { formatEducationDetails } from "./masterProfile";
+import type { ResumeScale } from "./exportPdf";
 
 /**
  * Trigger browser file download from Blob
@@ -28,311 +31,210 @@ function downloadBlob(blob: Blob, filename: string) {
 /**
  * Export Tailored Resume to ATS-Compliant Microsoft Word (.docx)
  * ATS Rules: Standard clean headings, no multi-column tables, standard bullet points.
+ *
+ * The document mirrors the one-page PDF layout point for point: the same
+ * fitted content, section order, font sizes and US Letter margins, with exact
+ * line heights equal to the PDF's line advances. Word's Times New Roman has
+ * the same character widths as the PDF's Times, so lines wrap the same way
+ * and the document fills one page like the PDF does.
  */
 export async function exportResumeToDocx(
   resume: TailoredResume,
-  filename: string = "Tailored_Resume.docx"
+  filename: string = "Tailored_Resume.docx",
+  templateIdOrName?: string,
+  scale: ResumeScale = { fontScale: 1, spacingScale: 1 }
 ): Promise<void> {
-  const { contactInfo, summary, skillsCategories, experience, education, projects, certifications } = resume;
+  const { contactInfo, summary, skillsCategories, experience, education, projects, community, certifications } = resume;
+  const { fontScale: f, spacingScale: sp } = scale;
 
-  // Contact line elements
-  const contactParts: string[] = [];
-  if (contactInfo.email) contactParts.push(contactInfo.email);
-  if (contactInfo.phone) contactParts.push(contactInfo.phone);
-  if (contactInfo.location) contactParts.push(contactInfo.location);
-  if (contactInfo.linkedin) contactParts.push(contactInfo.linkedin);
-  if (contactInfo.portfolio) contactParts.push(contactInfo.portfolio);
+  const tpl = (templateIdOrName || "").toLowerCase();
+  const isHarvard = tpl.includes("harvard") || tpl.includes("ivy") || tpl.includes("classic");
+  const isTech = tpl.includes("tech") || tpl.includes("engineering") || tpl.includes("modern");
+  const isExecutive = tpl.includes("executive") || tpl.includes("leadership") || tpl.includes("c-suite");
+
+  // Units: TextRun sizes are half-points, spacing and indents are twips (1/20 pt).
+  const PAGE_WIDTH_PT = 612;
+  const PAGE_HEIGHT_PT = 792;
+  const marginPt = isHarvard ? 40 : 45;
+  const contentWidthTw = (PAGE_WIDTH_PT - marginPt * 2) * 20;
+  const tw = (pt: number) => Math.round(pt * 20);
+  const run = (text: string, pt: number, opts: { bold?: boolean; italics?: boolean; color?: string } = {}) =>
+    new TextRun({ text, size: Math.round(pt * f * 2), font: "Times New Roman", ...opts });
+
+  type Align = (typeof AlignmentType)[keyof typeof AlignmentType];
+  /** A paragraph whose every line is exactly `advancePt` tall, like a PDF line advance. */
+  const para = (
+    runs: TextRun[],
+    advancePt: number,
+    extra: { after?: number; align?: Align; indent?: { left: number; hanging: number }; rightTab?: boolean } = {}
+  ) =>
+    new Paragraph({
+      alignment: extra.align,
+      spacing: {
+        line: tw(advancePt * sp),
+        lineRule: LineRuleType.EXACT,
+        after: tw((extra.after || 0) * sp),
+      },
+      indent: extra.indent,
+      tabStops: extra.rightTab ? [{ type: TabStopType.RIGHT, position: contentWidthTw }] : undefined,
+      children: runs,
+    });
 
   const children: Paragraph[] = [];
 
-  // Header: Full Name
-  children.push(
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 80 },
-      children: [
-        new TextRun({
-          text: contactInfo.fullName,
-          bold: true,
-          size: 36, // 18pt
-          font: "Times New Roman",
-        }),
-      ],
-    })
-  );
+  // Header
+  const centered = isHarvard || (!isTech && !isExecutive);
+  const align = centered ? AlignmentType.CENTER : undefined;
+  const contactParts = [
+    contactInfo.email,
+    contactInfo.phone,
+    contactInfo.location,
+    contactInfo.linkedin,
+    isExecutive ? "" : contactInfo.portfolio,
+  ].filter(Boolean) as string[];
 
-  // Subtitle / Target Title
-  if (contactInfo.title) {
-    children.push(
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 100 },
-        children: [
-          new TextRun({
-            text: contactInfo.title.toUpperCase(),
-            bold: true,
-            size: 22, // 11pt
-            color: "333333",
-            font: "Times New Roman",
-          }),
-        ],
-      })
-    );
+  if (isHarvard) {
+    children.push(para([run(contactInfo.fullName.toUpperCase(), 22, { bold: true, color: "0F1419" })], 18, { align }));
+    if (contactInfo.title) children.push(para([run(contactInfo.title, 10.5, { color: "3C414B" })], 14, { align }));
+  } else if (isExecutive) {
+    children.push(para([run(contactInfo.fullName, 23, { bold: true, color: "0F172A" })], 28));
+    if (contactInfo.title) children.push(para([run(contactInfo.title.toUpperCase(), 10.5, { bold: true, color: "475569" })], 18));
+  } else {
+    children.push(para([run(contactInfo.fullName, isTech ? 22 : 20, { bold: true, color: "0F172A" })], 18, { align }));
+    if (contactInfo.title) children.push(para([run(contactInfo.title.toUpperCase(), 10.5, { bold: true, color: "334155" })], 14, { align }));
   }
-
-  // Contact Info Line
   if (contactParts.length > 0) {
     children.push(
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 240 },
-        children: [
-          new TextRun({
-            text: contactParts.join("  |  "),
-            size: 19, // 9.5pt
-            color: "555555",
-            font: "Times New Roman",
-          }),
-        ],
-      })
+      para([run(contactParts.join(isTech ? "  |  " : "   •   "), 9, { color: "5A5F6E" })], centered && !isHarvard ? 20 : 18, { align })
     );
   }
 
-  // Helper for Section Heading
-  const createSectionHeading = (title: string): Paragraph => {
-    return new Paragraph({
-      heading: HeadingLevel.HEADING_2,
-      spacing: { before: 240, after: 120 },
+  // Section heading: 8pt gap, the title, a rule 4pt below it, then 13pt to the next line.
+  const heading = (title: string) =>
+    new Paragraph({
+      spacing: { before: tw(8 * sp), after: tw(13 * sp), line: tw(4 * sp + 9 * f), lineRule: LineRuleType.EXACT },
       border: {
-        bottom: {
-          color: "CCCCCC",
-          space: 2,
-          style: BorderStyle.SINGLE,
-          size: 6,
-        },
+        bottom: { color: isHarvard ? "282828" : "C8CDD7", space: 1, style: BorderStyle.SINGLE, size: isHarvard ? 8 : 6 },
       },
-      children: [
-        new TextRun({
-          text: title.toUpperCase(),
-          bold: true,
-          size: 24, // 12pt
-          color: "111111",
-          font: "Times New Roman",
-        }),
-      ],
+      children: [run(title.toUpperCase(), 10.5, { bold: true, color: "0F172A" })],
     });
+
+  const renderSummary = () => {
+    if (!summary) return;
+    children.push(heading(isExecutive ? "Executive Value Proposition" : "Professional Summary"));
+    children.push(para([run(summary, 9.5, { color: "282D37" })], 13));
   };
 
-  // 1. Professional Summary
-  if (summary) {
-    children.push(createSectionHeading("Professional Summary"));
-    children.push(
-      new Paragraph({
-        spacing: { after: 200, line: 300 },
-        children: [
-          new TextRun({
-            text: summary,
-            size: 21, // 10.5pt
-            font: "Times New Roman",
-          }),
-        ],
-      })
-    );
-  }
-
-  // 2. Core Competencies / Technical Skills
-  if (skillsCategories && skillsCategories.length > 0) {
-    children.push(createSectionHeading("Core Competencies & Technical Skills"));
-    skillsCategories.forEach((cat) => {
+  const renderSkills = () => {
+    if (!skillsCategories || skillsCategories.length === 0) return;
+    children.push(heading(isTech ? "Technical Stack & Core Skills" : "Core Competencies & Skills"));
+    for (const cat of skillsCategories) {
       children.push(
-        new Paragraph({
-          spacing: { after: 80 },
-          children: [
-            new TextRun({
-              text: `${cat.category}: `,
-              bold: true,
-              size: 21,
-              font: "Times New Roman",
-            }),
-            new TextRun({
-              text: cat.skills.join(", "),
-              size: 21,
-              font: "Times New Roman",
-            }),
-          ],
+        para([run(`${cat.category}: `, 9.5, { bold: true, color: "1E232D" }), run(cat.skills.join(", "), 9.5, { color: "323741" })], 13, {
+          indent: { left: tw(10), hanging: tw(10) },
         })
       );
-    });
-  }
+    }
+  };
 
-  // 3. Professional Experience
-  if (experience && experience.length > 0) {
-    children.push(createSectionHeading("Professional Experience"));
-    experience.forEach((exp) => {
-      // Role & Company line
-      const dateLoc = [exp.startDate, exp.endDate].filter(Boolean).join(" – ") + 
-        (exp.location ? ` | ${exp.location}` : "");
-
+  // Jobs and community roles share one layout, as in the PDF.
+  const renderRoleList = (title: string, roles: ExperienceItem[]) => {
+    if (roles.length === 0) return;
+    children.push(heading(title));
+    for (const exp of roles) {
+      const dates = [exp.startDate, exp.endDate].filter(Boolean).join(" – ");
       children.push(
-        new Paragraph({
-          spacing: { before: 140, after: 40 },
-          children: [
-            new TextRun({
-              text: exp.role,
-              bold: true,
-              size: 22,
-              font: "Times New Roman",
-            }),
-            new TextRun({
-              text: ` – ${exp.company}`,
-              size: 22,
-              font: "Times New Roman",
-            }),
-          ],
+        para([run(exp.role, 10, { bold: true, color: "0F172A" }), ...(dates ? [run(`\t${dates}`, 9, { color: "64748B" })] : [])], 13, {
+          rightTab: true,
         })
       );
-
-      if (dateLoc) {
+      children.push(
+        para(
+          [
+            run(exp.company, 9.5, { bold: !isHarvard, italics: isHarvard, color: "334155" }),
+            ...(exp.location ? [run(`\t${exp.location}`, 9, { italics: true, color: "64748B" })] : []),
+          ],
+          13,
+          { rightTab: true }
+        )
+      );
+      exp.bullets.forEach((bullet, i) => {
         children.push(
-          new Paragraph({
-            spacing: { after: 100 },
-            children: [
-              new TextRun({
-                text: dateLoc,
-                italics: true,
-                size: 19,
-                color: "666666",
-                font: "Times New Roman",
-              }),
-            ],
-          })
-        );
-      }
-
-      // Bullets
-      exp.bullets.forEach((bullet) => {
-        children.push(
-          new Paragraph({
-            bullet: { level: 0 },
-            spacing: { after: 60, line: 280 },
-            children: [
-              new TextRun({
-                text: bullet,
-                size: 20,
-                font: "Times New Roman",
-              }),
-            ],
+          para([run(`•\t${bullet}`, 9.5, { color: "2D323C" })], 12.5, {
+            indent: { left: tw(12), hanging: tw(10) },
+            after: 2.5 + (i === exp.bullets.length - 1 ? 4 : 0),
           })
         );
       });
-    });
-  }
+    }
+  };
 
-  // 4. Education
-  if (education && education.length > 0) {
-    children.push(createSectionHeading("Education"));
-    education.forEach((edu) => {
-      const field = edu.fieldOfStudy ? ` in ${edu.fieldOfStudy}` : "";
-      const year = edu.graduationYear ? ` | ${edu.graduationYear}` : "";
-      const loc = edu.location ? ` | ${edu.location}` : "";
+  const renderExperience = () =>
+    renderRoleList(isExecutive ? "Executive Leadership Experience" : "Professional Experience", experience || []);
 
+  const renderCommunity = () =>
+    renderRoleList("Community & Volunteer Experience", (community || []).map((c) => ({ ...c, company: c.organization })));
+
+  const renderEducation = () => {
+    if (!education || education.length === 0) return;
+    children.push(heading("Education"));
+    for (const edu of education) {
+      const degree = edu.degree + (edu.fieldOfStudy ? ` in ${edu.fieldOfStudy}` : "");
       children.push(
-        new Paragraph({
-          spacing: { before: 100, after: 40 },
-          children: [
-            new TextRun({
-              text: `${edu.degree}${field}`,
-              bold: true,
-              size: 21,
-              font: "Times New Roman",
-            }),
-            new TextRun({
-              text: ` – ${edu.institution}${loc}${year}`,
-              size: 21,
-              font: "Times New Roman",
-            }),
-          ],
+        para([run(degree, 10, { bold: true, color: "0F172A" }), ...(edu.graduationYear ? [run(`\t${edu.graduationYear}`, 9, { color: "64748B" })] : [])], 13, {
+          rightTab: true,
         })
       );
-
       const details = formatEducationDetails(edu);
-      if (details) {
-        children.push(
-          new Paragraph({
-            spacing: { after: 80 },
-            children: [
-              new TextRun({
-                text: details,
-                italics: true,
-                size: 19,
-                color: "666666",
-                font: "Times New Roman",
-              }),
-            ],
-          })
-        );
-      }
-    });
-  }
+      children.push(para([run(edu.institution + (details ? ` (${details})` : ""), 9.5, { color: "3C414B" })], 12, { after: 2 }));
+    }
+  };
 
-  // 5. Projects
-  if (projects && projects.length > 0) {
-    children.push(createSectionHeading("Key Projects"));
-    projects.forEach((proj) => {
-      const techStr = proj.technologies && proj.technologies.length > 0 ? ` [${proj.technologies.join(", ")}]` : "";
+  const renderProjects = () => {
+    if (!projects || projects.length === 0) return;
+    children.push(heading(isTech ? "Key Engineering Projects" : "Notable Projects"));
+    for (const proj of projects) {
+      const tech = proj.technologies && proj.technologies.length > 0 ? `\t[${proj.technologies.join(", ")}]` : "";
       children.push(
-        new Paragraph({
-          spacing: { before: 100, after: 40 },
-          children: [
-            new TextRun({
-              text: proj.name,
-              bold: true,
-              size: 21,
-              font: "Times New Roman",
-            }),
-            new TextRun({
-              text: techStr,
-              italics: true,
-              size: 19,
-              color: "555555",
-              font: "Times New Roman",
-            }),
-          ],
+        para([run(proj.name, 10, { bold: true, color: "0F172A" }), ...(tech ? [run(tech, 8.5, { italics: true, color: "505A6E" })] : [])], 12, {
+          rightTab: true,
         })
       );
-      children.push(
-        new Paragraph({
-          spacing: { after: 100 },
-          children: [
-            new TextRun({
-              text: proj.description,
-              size: 20,
-              font: "Times New Roman",
-            }),
-          ],
-        })
-      );
-    });
-  }
+      children.push(para([run(proj.description, 9, { color: "323741" })], 12, { after: 4 }));
+    }
+  };
 
-  // 6. Certifications
-  if (certifications && certifications.length > 0) {
-    children.push(createSectionHeading("Certifications"));
-    certifications.forEach((cert) => {
-      children.push(
-        new Paragraph({
-          bullet: { level: 0 },
-          spacing: { after: 40 },
-          children: [
-            new TextRun({
-              text: cert,
-              size: 20,
-              font: "Times New Roman",
-            }),
-          ],
-        })
-      );
-    });
+  const renderCertifications = () => {
+    if (!certifications || certifications.length === 0) return;
+    children.push(heading("Certifications"));
+    for (const cert of certifications) {
+      children.push(para([run(`•  ${cert}`, 9, { color: "323741" })], 13));
+    }
+  };
+
+  // Same section order as the PDF for each template.
+  if (isHarvard) {
+    renderEducation();
+    renderExperience();
+    renderProjects();
+    renderCommunity();
+    renderSkills();
+    renderCertifications();
+  } else if (isTech) {
+    renderSkills();
+    renderExperience();
+    renderProjects();
+    renderCommunity();
+    renderEducation();
+    renderCertifications();
+  } else {
+    renderSummary();
+    renderSkills();
+    renderExperience();
+    renderProjects();
+    renderCommunity();
+    renderEducation();
+    renderCertifications();
   }
 
   const doc = new Document({
@@ -340,15 +242,11 @@ export async function exportResumeToDocx(
       {
         properties: {
           page: {
-            margin: {
-              top: 1000,
-              right: 1000,
-              bottom: 1000,
-              left: 1000,
-            },
+            size: { width: tw(PAGE_WIDTH_PT), height: tw(PAGE_HEIGHT_PT) }, // US Letter, like the PDF
+            margin: { top: tw(marginPt), right: tw(marginPt), bottom: tw(marginPt), left: tw(marginPt) },
           },
         },
-        children: children,
+        children,
       },
     ],
   });

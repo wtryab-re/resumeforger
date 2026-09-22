@@ -12,9 +12,21 @@
  */
 
 import type { CoverLetterData, TailoredResume } from "../types";
+import type { FittedResume } from "./exportPdf";
+
+export type { FittedResume };
 
 const loadPdf = () => import("./exportPdf");
 const loadDocx = () => import("./exportDocx");
+
+/** The resume exactly as it will appear on its one page (see exportPdf.fitResumeToOnePage). */
+export async function fitResumeToOnePage(
+  resume: TailoredResume,
+  templateIdOrName?: string
+): Promise<FittedResume> {
+  const { fitResumeToOnePage: fit } = await loadPdf();
+  return fit(resume, templateIdOrName);
+}
 
 export async function exportResumeToPdf(
   resume: TailoredResume,
@@ -27,10 +39,13 @@ export async function exportResumeToPdf(
 
 export async function exportResumeToDocx(
   resume: TailoredResume,
-  filename?: string
+  filename?: string,
+  templateIdOrName?: string
 ): Promise<void> {
-  const { exportResumeToDocx: run } = await loadDocx();
-  await run(resume, filename);
+  // The DOCX mirrors the PDF layout, so it uses the same one-page fit.
+  const [{ fitResumeToOnePage: fit }, { exportResumeToDocx: run }] = await Promise.all([loadPdf(), loadDocx()]);
+  const fitted = fit(resume, templateIdOrName);
+  await run(fitted.resume, filename, templateIdOrName, fitted.scale);
 }
 
 export async function exportCoverLetterToPdf(

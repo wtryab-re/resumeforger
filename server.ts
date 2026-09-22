@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { DEFAULT_MODEL, FALLBACK_MODEL, resolveModel } from "./src/data/models";
+import { groundResume, type GroundingContext, type GroundingIssue } from "./src/utils/grounding";
 
 // The production build is a bundled CJS file, where __filename/__dirname exist
 // natively. Under tsx (ESM) they do not, but that path only ever runs the Vite
@@ -231,6 +232,172 @@ app.post("/api/gemini/test-key", async (req, res) => {
 });
 
 // Tailor Resume endpoint
+// Asks the model to rewrite a tailored resume without the listed ungrounded
+// claims. Returns the corrected tailoredResume object.
+async function repairUngroundedResume(
+  client: GoogleGenAI,
+  model: string,
+  resumeText: string,
+  tailored: unknown,
+  issues: GroundingIssue[]
+) {
+  const problems = issues.map((i) => `- [${i.section}] "${i.text}": ${i.reason}`).join("\n");
+  const response = await callGeminiWithFallback(client, {
+    model,
+    contents: `
+The tailored resume below contains claims that are NOT supported by the candidate's own resume:
+${problems}
+
+Rewrite the tailored resume so every statement is supported by the candidate's resume:
+- Remove invented numbers, skills, employers, schools, certifications, projects and honors.
+- Restore job titles, degrees and dates exactly as the candidate's resume states them.
+- Where a bullet or sentence mixes true and invented content, keep the true part.
+- Keep the length close to the original by drawing on OTHER real content from the candidate's resume, never by inventing.
+
+--- CANDIDATE'S RESUME (the only source of facts) ---
+${resumeText}
+
+--- TAILORED RESUME TO CORRECT (JSON) ---
+${JSON.stringify(tailored)}
+`,
+    config: {
+      systemInstruction: "You correct resumes so they contain only facts from the candidate's own resume. Never invent anything.",
+      responseMimeType: "application/json",
+      temperature: 0,
+      responseSchema: TAILORED_RESUME_SCHEMA,
+    },
+  });
+  return JSON.parse(response.text || "{}");
+}
+
+// Shape of a tailored resume; shared by generation and the accuracy-repair pass.
+const TAILORED_RESUME_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    contactInfo: {
+      type: Type.OBJECT,
+      properties: {
+        fullName: { type: Type.STRING },
+        title: { type: Type.STRING },
+        email: { type: Type.STRING },
+        phone: { type: Type.STRING },
+        location: { type: Type.STRING },
+        linkedin: { type: Type.STRING },
+        portfolio: { type: Type.STRING },
+      },
+      required: ["fullName", "title"],
+    },
+    summary: {
+      type: Type.STRING,
+      description: "A 2-4 sentence summary aimed at the job description, stating only experience, skills and results found in the candidate's resume.",
+    },
+    skillsCategories: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          category: { type: Type.STRING, description: "e.g., Languages & Frameworks, Cloud & DevOps, Management" },
+          skills: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "Only skills named in the candidate's resume, never ones taken from the job description alone.",
+          },
+        },
+        required: ["category", "skills"],
+      },
+    },
+    experience: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          company: { type: Type.STRING },
+          role: { type: Type.STRING },
+          location: { type: Type.STRING },
+          startDate: { type: Type.STRING },
+          endDate: { type: Type.STRING },
+          bullets: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "Bullets from this role in the candidate's resume, reworded with strong action verbs and ordered most relevant to the job first. Keep numbers the resume states; never add new ones.",
+          },
+          skillsUsed: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+          },
+        },
+        required: ["company", "role", "bullets"],
+      },
+    },
+    education: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          institution: { type: Type.STRING },
+          degree: { type: Type.STRING },
+          fieldOfStudy: { type: Type.STRING },
+          location: { type: Type.STRING },
+          graduationYear: { type: Type.STRING },
+          gpa: { type: Type.STRING, description: "Only if the candidate's resume states a GPA." },
+          honorsOrDetails: { type: Type.STRING, description: "Awards and honors listed for this degree in the candidate's resume." },
+        },
+        required: ["institution", "degree"],
+      },
+    },
+    projects: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING },
+          description: { type: Type.STRING },
+          technologies: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+          },
+          link: { type: Type.STRING },
+          transferable: {
+            type: Type.BOOLEAN,
+            description: "true if this project is included mainly for transferable qualities (leadership, communication, teamwork...) rather than direct relevance to the job.",
+          },
+        },
+        required: ["name", "description"],
+      },
+      description: "Projects from the candidate's resume, most relevant first; transferable-only projects last.",
+    },
+    community: {
+      type: Type.ARRAY,
+      description: "Volunteer, community, club, mentoring or other leadership roles from the candidate's resume, ordered by how well they show qualities the job values. Empty if the resume has none.",
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          organization: { type: Type.STRING },
+          role: { type: Type.STRING },
+          location: { type: Type.STRING },
+          startDate: { type: Type.STRING },
+          endDate: { type: Type.STRING },
+          bullets: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "What the candidate actually did in this role per their resume, phrased to show the relevant quality; most relevant first.",
+          },
+        },
+        required: ["organization", "role", "bullets"],
+      },
+    },
+    certifications: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+    fontFamily: {
+      type: Type.STRING,
+      description: "Must be 'Times New Roman'",
+    },
+  },
+  required: ["contactInfo", "summary", "skillsCategories", "experience", "education"],
+};
+
 app.post("/api/gemini/tailor-resume", async (req, res) => {
   try {
     const {
@@ -256,55 +423,53 @@ app.post("/api/gemini/tailor-resume", async (req, res) => {
     if (resumeTemplate && (resumeTemplate.content || resumeTemplate.name)) {
       templateDirectives = `
 ================================================================================
-MANDATORY RESUME TEMPLATE CONFORMANCE (REQUIRED TO FOLLOW):
-The user has provided a mandatory Resume Template: "${resumeTemplate.name || 'Custom Template'}".
-YOU ARE STRICTLY REQUIRED TO FOLLOW THIS TEMPLATE TO THE LETTER WHILE CREATING THE TAILORED RESUME.
+RESUME TEMPLATE (LAYOUT AND STYLE ONLY): "${resumeTemplate.name || 'Custom Template'}"
+Follow this template for section order, headings, bullet style and emphasis.
+It NEVER overrides the truthfulness rules above: where it asks for metrics,
+credentials, roles or sections the candidate's resume doesn't contain, leave
+them out rather than inventing them.
 
-TEMPLATE BLUEPRINT & FORMAT RULES:
 ${resumeTemplate.content || ""}
 ${Array.isArray(resumeTemplate.rules) ? resumeTemplate.rules.map((r: string) => `• ${r}`).join("\n") : ""}
-
-STRICT CONFORMANCE RULES:
-1. Section Ordering: Organize the resume sections, headings, and categorization in the exact sequence dictated by this template.
-2. Bullet Format & Phrasing: Format experience bullets, accomplishment statements, and skill tags according to this template's specific conventions.
-3. Density & Metrics: Match the quantified metrics depth and architectural focus required by this template.
-4. DO NOT deviate into a default generic layout. Adherence to this template is mandatory.
 ================================================================================
 `;
     }
 
     const systemInstruction = `
-You are an Elite Executive Resume Strategist, ATS (Applicant Tracking System) Algorithm Specialist, and Technical Recruiter.
-Your objective is to optimize a candidate's resume for a specific job description while strictly adhering to modern ATS parsing standards and the user's required resume template.
+You are an expert resume writer and ATS (Applicant Tracking System) specialist.
+Your job is to present the candidate's REAL background as relevantly as possible for a specific job description.
+
+================================================================================
+RULE 1 - TRUTHFULNESS (OVERRIDES EVERY OTHER INSTRUCTION, INCLUDING THE TEMPLATE):
+The candidate's resume below is the ONLY source of facts. Everything in the output must be traceable to it.
+- Never invent or alter an employer, job title, school, degree, GPA, date, certification, award, project or link.
+- Never add a number, percentage, dollar amount, team size, user count or other metric that is not in the candidate's resume. A bullet without a number is fine; an invented number is not.
+- Never list or imply a skill, tool, language, framework, methodology or domain the candidate's resume does not mention - even if the job description asks for it. Put those in atsAnalysis.missingKeywords instead.
+- Never claim responsibilities or outcomes the resume doesn't describe (e.g. "led a team", "owned the roadmap") unless the resume says so.
+- contactInfo.title must be the candidate's own current or most recent title (or an accurate description of it), not the target job title.
+- You MAY: reorder, select, shorten, merge and reword the candidate's real content; use the job description's wording for things the candidate genuinely did; choose which real skills and bullets to emphasize.
+- Mention the candidate's real adjacent experience when the JD asks for something they lack, without claiming the missing thing.
+================================================================================
 ${templateDirectives}
+LENGTH - EXACTLY ONE PAGE:
+The resume is rendered on a single US Letter page. The layout fills the page from your output and trims the least relevant items when there is too much - it can never add content - so give it MORE real material than fits:
+1. Core content first: the candidate's experience, skills, projects and education most relevant to the job.
+2. Transferable content as well, always: EVERY volunteer, community, club, mentoring, leadership or other role from the candidate's resume (in "community"), plus their remaining projects (with transferable: true) and extra bullets from other jobs, chosen for qualities the job values - e.g. leadership, communication, teamwork, ownership, problem solving, customer focus. Phrase each around what the candidate actually did that shows the quality; you may name the quality only if what they did clearly demonstrates it.
+This transferable content fills the page when the relevant content runs short and is removed first when space runs out. Never pad or invent to reach a length; if the candidate's resume genuinely has little content, return what is true.
 
-================================================================================
-CRITICAL TRUTHFULNESS & GROUNDING MANDATE (ABSOLUTELY NO LYING AT ALL):
-1. THE KNOWLEDGE BASE IS ONLY AND STRICTLY THE USER'S PROVIDED RESUME AND REAL WORK INFORMATION.
-2. ABSOLUTELY NO LYING AT ALL:
-   - YOU MUST NEVER INVENT, FABRICATE, OR HALLUCINATE ANY EMPLOYER, COMPANY, JOB TITLE, EDUCATION DEGREE, SCHOOL, DATES, CERTIFICATION, OR PROJECT.
-   - YOU MUST NEVER INVENT FAKE METRICS, NUMBERS, STATS, REVENUE PERCENTAGES, OR IMPACT FIGURES. Only use numbers already in the resume or directly derived from the user's authentic input.
-   - YOU MUST NEVER CLAIM THE CANDIDATE HAS SKILLS, TOOLS, LANGUAGES, OR FRAMEWORKS THEY NEVER MENTIONED OR WORKED WITH.
-3. YOUR MISSION IS ONLY TO REFRAME THE NARRATIVE OF THE REAL WORK FOR THE JD:
-   - Reframe, reword, prioritize, and structure their GENUINE work and REAL accomplishments to address the job description's priorities and ATS keywords.
-   - Highlight authentic transferable strengths, related problem-solving, and foundational expertise.
-   - If the job description requires a technology, tool, or qualification that the candidate does not have: DO NOT claim they know it or used it! Honestly record it in missingKeywords in atsAnalysis, and spotlight their real adjacent capabilities and genuine transferable experience.
-================================================================================
-
-CRITICAL ATS PRINCIPLES:
-1. Parse-ability: Clear chronological standard headers matching the required template.
-2. Action-Verb & Impact Formula: Use "Accomplished [X] as measured by [Y], by doing [Z]" (Google XYZ formula) ONLY using the candidate's authentic achievements.
-3. Keyword Harmonization: Naturally integrate hard skills, frameworks, industry terminology, and technical keywords from the job description WITHOUT fabricating fake experience.
-4. Truthfulness & Authenticity: Elevate and reframe the user's real experience to match the role requirements without fabricating non-existent degrees or company names.
-5. Provide actionable ATS Scanner Optimization Tips explaining how an ATS scanner evaluates this resume and what makes it pass screening filters.
-6. Typography Standard: The tailored resume is strictly designed and formatted using Times New Roman serif font. Always set fontFamily to "Times New Roman".
+ATS PRINCIPLES:
+1. Parse-ability: clear, standard, reverse-chronological section headers.
+2. Strong bullets: lead with an action verb; use the Google XYZ formula ("Accomplished [X] as measured by [Y], by doing [Z]") only when the resume provides the measure.
+3. Keywords: where the candidate genuinely has a skill or did the work, phrase it with the job description's terminology so ATS matching picks it up.
+4. Provide actionable ATS scanner tips explaining how an ATS will evaluate this resume.
+5. Typography: the resume uses Times New Roman. Always set fontFamily to "Times New Roman".
 `;
 
     const prompt = `
 Target Role: ${roleTitle || "Target Position"}
 Target Company: ${companyName || "Target Employer"}
 Tone Preference: ${tone}
-${templateDirectives ? `\nMandatory Template to Follow: ${resumeTemplate?.name || 'Provided Template'}\n` : ""}
+${templateDirectives ? `\nTemplate: ${resumeTemplate?.name || 'Provided Template'}\n` : ""}
 
 --- CANDIDATE CURRENT RESUME ---
 ${resumeText}
@@ -312,7 +477,7 @@ ${resumeText}
 --- TARGET JOB DESCRIPTION ---
 ${jobDescription}
 
-Please perform a comprehensive ATS optimization, adhering strictly to the mandatory template rules, and return a structured JSON response matching the required schema.
+Tailor the candidate's resume to this job using only facts from the candidate's resume, follow the template's layout, and return a structured JSON response matching the required schema.
 `;
 
     const response = await callGeminiWithFallback(client, {
@@ -325,106 +490,7 @@ Please perform a comprehensive ATS optimization, adhering strictly to the mandat
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            tailoredResume: {
-              type: Type.OBJECT,
-              properties: {
-                contactInfo: {
-                  type: Type.OBJECT,
-                  properties: {
-                    fullName: { type: Type.STRING },
-                    title: { type: Type.STRING },
-                    email: { type: Type.STRING },
-                    phone: { type: Type.STRING },
-                    location: { type: Type.STRING },
-                    linkedin: { type: Type.STRING },
-                    portfolio: { type: Type.STRING },
-                  },
-                  required: ["fullName", "title"],
-                },
-                summary: {
-                  type: Type.STRING,
-                  description: "A compelling 3-4 sentence ATS-optimized executive summary targeted precisely to the job description.",
-                },
-                skillsCategories: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      category: { type: Type.STRING, description: "e.g., Languages & Frameworks, Cloud & DevOps, Management" },
-                      skills: { 
-                        type: Type.ARRAY, 
-                        items: { type: Type.STRING } 
-                      },
-                    },
-                    required: ["category", "skills"],
-                  },
-                },
-                experience: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      company: { type: Type.STRING },
-                      role: { type: Type.STRING },
-                      location: { type: Type.STRING },
-                      startDate: { type: Type.STRING },
-                      endDate: { type: Type.STRING },
-                      bullets: {
-                        type: Type.ARRAY,
-                        items: { type: Type.STRING },
-                        description: "Bullet points starting with powerful past-tense action verbs, containing quantified outcomes and targeted keywords.",
-                      },
-                      skillsUsed: {
-                        type: Type.ARRAY,
-                        items: { type: Type.STRING },
-                      },
-                    },
-                    required: ["company", "role", "bullets"],
-                  },
-                },
-                education: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      institution: { type: Type.STRING },
-                      degree: { type: Type.STRING },
-                      fieldOfStudy: { type: Type.STRING },
-                      location: { type: Type.STRING },
-                      graduationYear: { type: Type.STRING },
-                      gpa: { type: Type.STRING, description: "Only if the candidate's resume states a GPA." },
-                      honorsOrDetails: { type: Type.STRING, description: "Awards and honors listed for this degree in the candidate's resume." },
-                    },
-                    required: ["institution", "degree"],
-                  },
-                },
-                projects: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      name: { type: Type.STRING },
-                      description: { type: Type.STRING },
-                      technologies: {
-                        type: Type.ARRAY,
-                        items: { type: Type.STRING },
-                      },
-                      link: { type: Type.STRING },
-                    },
-                    required: ["name", "description"],
-                  },
-                },
-                certifications: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                },
-                fontFamily: {
-                  type: Type.STRING,
-                  description: "Must be 'Times New Roman'",
-                },
-              },
-              required: ["contactInfo", "summary", "skillsCategories", "experience", "education"],
-            },
+            tailoredResume: TAILORED_RESUME_SCHEMA,
             atsAnalysis: {
               type: Type.OBJECT,
               properties: {
@@ -504,7 +570,58 @@ Please perform a comprehensive ATS optimization, adhering strictly to the mandat
 
     const parsed = JSON.parse(response.text || "{}");
     if (parsed.tailoredResume) {
+      const grounding: GroundingContext = {
+        sourceText: resumeText,
+        jobDescription,
+        missingKeywords: parsed.atsAnalysis?.missingKeywords,
+        companyName,
+      };
+
+      // 1. Anything not traceable to the candidate's resume goes back to the
+      //    model once, with the specific problems listed, for a truthful rewrite.
+      const firstPass = groundResume(parsed.tailoredResume, grounding, false);
+      if (firstPass.issues.length > 0) {
+        try {
+          const repaired = await repairUngroundedResume(
+            client, chosenModel, resumeText, parsed.tailoredResume, firstPass.issues
+          );
+          if (repaired?.contactInfo && Array.isArray(repaired.experience)) {
+            parsed.tailoredResume = repaired;
+          }
+        } catch (repairError) {
+          console.warn("Accuracy repair pass failed; falling back to removal:", repairError);
+        }
+      }
+
+      // 2. Whatever still can't be backed up is removed outright.
+      const final = groundResume(parsed.tailoredResume, grounding, true);
+      parsed.tailoredResume = final.resume;
       parsed.tailoredResume.fontFamily = "Times New Roman";
+
+      if (final.issues.length > 0) {
+        const removed = [...new Set(final.issues.map((i) => i.text))];
+        parsed.tailoringChanges = [
+          {
+            section: "Accuracy check",
+            change: `Removed ${removed.length} item(s) not found in your profile: ${removed.slice(0, 8).join("; ")}${removed.length > 8 ? "; …" : ""}`,
+            reason: "Everything on the resume must come from your own profile.",
+          },
+          ...(parsed.tailoringChanges || []),
+        ];
+      }
+
+      // Keywords are only "matched" if the candidate really has them.
+      if (parsed.atsAnalysis) {
+        const source = resumeText.toLowerCase();
+        const matched: string[] = parsed.atsAnalysis.matchedKeywords || [];
+        const unsupported = matched.filter((k) => !source.includes(String(k).toLowerCase()));
+        if (unsupported.length > 0) {
+          parsed.atsAnalysis.matchedKeywords = matched.filter((k) => !unsupported.includes(k));
+          parsed.atsAnalysis.missingKeywords = [
+            ...new Set([...(parsed.atsAnalysis.missingKeywords || []), ...unsupported]),
+          ];
+        }
+      }
     }
     res.json({ success: true, data: parsed });
   } catch (error: any) {

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { 
   Download, 
   FileText, 
@@ -9,8 +9,8 @@ import {
   Eye, 
   Layout
 } from "lucide-react";
-import { TailoredResume, TailoringChange } from "../types";
-import { exportResumeToDocx, exportResumeToPdf } from "../utils/exports";
+import { ExperienceItem, TailoredResume, TailoringChange } from "../types";
+import { exportResumeToDocx, exportResumeToPdf, fitResumeToOnePage, type FittedResume } from "../utils/exports";
 import { formatEducationDetails } from "../utils/masterProfile";
 
 interface ResumePreviewProps {
@@ -45,9 +45,22 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
   // Local editable state
   const [editState, setEditState] = useState<TailoredResume>(tailoredResume);
 
+  // The preview shows exactly what the one-page PDF will contain.
+  const [fit, setFit] = useState<FittedResume | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fitResumeToOnePage(tailoredResume, activeFormat)
+      .then((result) => !cancelled && setFit(result))
+      .catch((err) => console.error("One-page fit failed:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [tailoredResume, activeFormat]);
+  const shown = fit?.resume ?? tailoredResume;
+
   const handleCopyText = () => {
     const lines: string[] = [];
-    const r = tailoredResume;
+    const r = shown;
 
     lines.push(r.contactInfo.fullName.toUpperCase());
     if (r.contactInfo.title) lines.push(r.contactInfo.title);
@@ -71,6 +84,15 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
       });
     }
 
+    if (r.community && r.community.length > 0) {
+      lines.push("\nCOMMUNITY & VOLUNTEER EXPERIENCE");
+      r.community.forEach(item => {
+        const dates = [item.startDate, item.endDate].filter(Boolean).join(" - ");
+        lines.push(`\n${item.role} | ${item.organization}${dates ? ` | ${dates}` : ""}`);
+        item.bullets.forEach(b => lines.push(`• ${b}`));
+      });
+    }
+
     if (r.education && r.education.length > 0) {
       lines.push("\nEDUCATION");
       r.education.forEach(edu => {
@@ -90,7 +112,7 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
     setIsExportingDocx(true);
     try {
       const sanitizedName = tailoredResume.contactInfo.fullName.replace(/\s+/g, "_") || "Tailored";
-      await exportResumeToDocx(tailoredResume, `${sanitizedName}_ATS_Resume.docx`);
+      await exportResumeToDocx(tailoredResume, `${sanitizedName}_ATS_Resume.docx`, activeFormat);
     } catch (err) {
       console.error("DOCX Export error:", err);
     } finally {
@@ -115,37 +137,37 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
   // Sections
   const renderContactBar = (centered = true) => (
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600 ${centered ? "justify-center" : "justify-start"} mt-1.5`}>
-      {tailoredResume.contactInfo.email && <span>{tailoredResume.contactInfo.email}</span>}
-      {tailoredResume.contactInfo.phone && <span>• {tailoredResume.contactInfo.phone}</span>}
-      {tailoredResume.contactInfo.location && <span>• {tailoredResume.contactInfo.location}</span>}
-      {tailoredResume.contactInfo.linkedin && <span>• {tailoredResume.contactInfo.linkedin}</span>}
-      {tailoredResume.contactInfo.portfolio && <span>• {tailoredResume.contactInfo.portfolio}</span>}
+      {shown.contactInfo.email && <span>{shown.contactInfo.email}</span>}
+      {shown.contactInfo.phone && <span>• {shown.contactInfo.phone}</span>}
+      {shown.contactInfo.location && <span>• {shown.contactInfo.location}</span>}
+      {shown.contactInfo.linkedin && <span>• {shown.contactInfo.linkedin}</span>}
+      {shown.contactInfo.portfolio && <span>• {shown.contactInfo.portfolio}</span>}
     </div>
   );
 
   const renderSummarySection = (title = "Professional Summary") => {
-    if (!tailoredResume.summary) return null;
+    if (!shown.summary) return null;
     return (
       <div className="mt-5">
         <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1 mb-2">
           {title}
         </h2>
         <p className="text-xs sm:text-sm text-slate-800 leading-relaxed text-justify">
-          {tailoredResume.summary}
+          {shown.summary}
         </p>
       </div>
     );
   };
 
   const renderSkillsSection = (title = "Technical Skills & Competencies", _asBadges = false) => {
-    if (!tailoredResume.skillsCategories || tailoredResume.skillsCategories.length === 0) return null;
+    if (!shown.skillsCategories || shown.skillsCategories.length === 0) return null;
     return (
       <div className="mt-5">
         <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1 mb-2.5">
           {title}
         </h2>
         <div className="space-y-1.5 text-xs sm:text-sm leading-relaxed">
-          {tailoredResume.skillsCategories.map((cat, idx) => (
+          {shown.skillsCategories.map((cat, idx) => (
             <div key={idx} className="flex flex-wrap items-baseline gap-x-1.5 text-slate-800">
               <span className="font-bold text-slate-950 font-serif font-['Times_New_Roman',_Times,_serif]">
                 {cat.category}:
@@ -160,15 +182,16 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
     );
   };
 
-  const renderExperienceSection = (showTechBadges = false) => {
-    if (!tailoredResume.experience || tailoredResume.experience.length === 0) return null;
+  // Jobs and community roles share one layout, as in the PDF.
+  const renderRoleSection = (title: string, roles: ExperienceItem[]) => {
+    if (roles.length === 0) return null;
     return (
       <div className="mt-5">
         <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1 mb-2.5">
-          Professional Experience
+          {title}
         </h2>
         <div className="space-y-4">
-          {tailoredResume.experience.map((exp, idx) => (
+          {roles.map((exp, idx) => (
             <div key={idx}>
               <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-0.5">
                 <div className="font-bold text-xs sm:text-sm text-slate-900">
@@ -194,15 +217,24 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
     );
   };
 
+  const renderExperienceSection = (_showTechBadges = false) =>
+    renderRoleSection("Professional Experience", shown.experience || []);
+
+  const renderCommunitySection = () =>
+    renderRoleSection(
+      "Community & Volunteer Experience",
+      (shown.community || []).map((c) => ({ ...c, company: c.organization }))
+    );
+
   const renderEducationSection = () => {
-    if (!tailoredResume.education || tailoredResume.education.length === 0) return null;
+    if (!shown.education || shown.education.length === 0) return null;
     return (
       <div className="mt-5">
         <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1 mb-2">
           Education
         </h2>
         <div className="space-y-2 text-xs sm:text-sm">
-          {tailoredResume.education.map((edu, idx) => (
+          {shown.education.map((edu, idx) => (
             <div key={idx} className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-0.5">
               <div>
                 <span className="font-bold text-slate-900">
@@ -229,14 +261,14 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
   };
 
   const renderProjectsSection = (techStyle = false) => {
-    if (!tailoredResume.projects || tailoredResume.projects.length === 0) return null;
+    if (!shown.projects || shown.projects.length === 0) return null;
     return (
       <div className="mt-5">
         <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1 mb-2">
           Key Projects
         </h2>
         <div className="space-y-3">
-          {tailoredResume.projects.map((proj, idx) => (
+          {shown.projects.map((proj, idx) => (
             <div key={idx} className="text-xs sm:text-sm">
               <div className="flex flex-wrap items-baseline gap-2">
                 <span className="font-bold text-slate-900">{proj.name}</span>
@@ -255,14 +287,14 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
   };
 
   const renderCertificationsSection = () => {
-    if (!tailoredResume.certifications || tailoredResume.certifications.length === 0) return null;
+    if (!shown.certifications || shown.certifications.length === 0) return null;
     return (
       <div className="mt-5">
         <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1 mb-2">
           Certifications
         </h2>
         <ul className="list-disc list-outside pl-4 text-xs sm:text-sm text-slate-800 space-y-1">
-          {tailoredResume.certifications.map((cert, idx) => (
+          {shown.certifications.map((cert, idx) => (
             <li key={idx}>{cert}</li>
           ))}
         </ul>
@@ -364,6 +396,40 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
         </div>
       </div>
 
+      {/* One-page status: the PDF and DOCX use exactly this content */}
+      {viewMode === "formatted" && fit && (
+        <div
+          className={`max-w-4xl mx-auto px-3 py-2 rounded-md border text-xs ${
+            fit.fill >= 0.97
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+              : "bg-amber-50 border-amber-200 text-amber-800"
+          }`}
+        >
+          {fit.fill >= 0.97 ? (
+            <span>
+              Fills exactly one page ({(9.5 * fit.scale.fontScale).toFixed(1)}pt body text).
+            </span>
+          ) : (
+            <span>
+              Fills about {Math.round(fit.fill * 100)}% of the page. Nothing is invented to pad it; add more of your
+              real experience, projects or skills to your profile to fill the page.
+            </span>
+          )}
+          {fit.removed.length > 0 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer">
+                {fit.removed.length} lower-priority item{fit.removed.length === 1 ? "" : "s"} left off to fit one page
+              </summary>
+              <ul className="mt-1 list-disc pl-5 space-y-0.5">
+                {fit.removed.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+
       {/* 1. Formatted Preview - Distinct Layouts Per Template (All Times New Roman) */}
       {viewMode === "formatted" && (
         <div className="bg-white border border-slate-200 rounded-lg p-5 sm:p-8 md:p-12 max-w-4xl mx-auto shadow-2xs break-words font-serif font-['Times_New_Roman',_Times,_serif]">
@@ -374,11 +440,11 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
               {/* Centered all-caps Header */}
               <div className="text-center pb-4 border-b border-slate-800">
                 <h1 className="text-2xl sm:text-3xl font-bold uppercase tracking-wider text-slate-950 font-serif font-['Times_New_Roman',_Times,_serif]">
-                  {tailoredResume.contactInfo.fullName}
+                  {shown.contactInfo.fullName}
                 </h1>
-                {tailoredResume.contactInfo.title && (
+                {shown.contactInfo.title && (
                   <div className="text-xs font-serif font-['Times_New_Roman',_Times,_serif] text-slate-700 mt-1">
-                    {tailoredResume.contactInfo.title}
+                    {shown.contactInfo.title}
                   </div>
                 )}
                 {renderContactBar(true)}
@@ -388,6 +454,7 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
               {renderEducationSection()}
               {renderExperienceSection(false)}
               {renderProjectsSection(false)}
+              {renderCommunitySection()}
               {renderSkillsSection("Technical Skills & Interests", false)}
               {renderCertificationsSection()}
             </div>
@@ -400,11 +467,11 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
               <div className="pb-4 border-b-2 border-slate-800">
                 <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
                   <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-950 font-serif font-['Times_New_Roman',_Times,_serif]">
-                    {tailoredResume.contactInfo.fullName}
+                    {shown.contactInfo.fullName}
                   </h1>
-                  {tailoredResume.contactInfo.title && (
+                  {shown.contactInfo.title && (
                     <span className="text-xs sm:text-sm font-semibold uppercase tracking-wider text-slate-600 font-serif font-['Times_New_Roman',_Times,_serif]">
-                      {tailoredResume.contactInfo.title}
+                      {shown.contactInfo.title}
                     </span>
                   )}
                 </div>
@@ -415,6 +482,7 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
               {renderSkillsSection("Technical Skills Matrix")}
               {renderExperienceSection(true)}
               {renderProjectsSection(true)}
+              {renderCommunitySection()}
               {renderEducationSection()}
               {renderCertificationsSection()}
             </div>
@@ -426,11 +494,11 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
               {/* Executive Left Accent Banner */}
               <div className="border-l-4 border-slate-900 pl-4 py-1 pb-3 mb-4">
                 <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-950 font-serif font-['Times_New_Roman',_Times,_serif]">
-                  {tailoredResume.contactInfo.fullName}
+                  {shown.contactInfo.fullName}
                 </h1>
-                {tailoredResume.contactInfo.title && (
+                {shown.contactInfo.title && (
                   <div className="text-xs font-bold uppercase tracking-widest text-slate-600 mt-1 font-serif font-['Times_New_Roman',_Times,_serif]">
-                    {tailoredResume.contactInfo.title}
+                    {shown.contactInfo.title}
                   </div>
                 )}
                 {renderContactBar(false)}
@@ -447,6 +515,7 @@ export const ResumePreview: React.FC<ResumePreviewProps> = ({
 
               {/* Strategic Projects / Initiatives */}
               {renderProjectsSection(false)}
+              {renderCommunitySection()}
 
               {/* Education & Credentials */}
               {renderEducationSection()}
